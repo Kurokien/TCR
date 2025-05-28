@@ -56,30 +56,42 @@ func main() {
 }
 
 func playGame(conn net.Conn, reader *bufio.Reader) {
-	serverReader := bufio.NewReader(conn)
 	fmt.Println("🎮 Entering game mode...")
 
+	// Set longer timeout for reading from server
+	conn.SetReadDeadline(time.Now().Add(60 * time.Second))
+
+	buffer := make([]byte, 1024)
+
 	for {
-		// Read message from server
-		message, err := serverReader.ReadString('\n')
+		// Read message from server with timeout
+		conn.SetReadDeadline(time.Now().Add(30 * time.Second))
+		n, err := conn.Read(buffer)
 		if err != nil {
-			// Check if it's actually EOF or connection closed
-			if err.Error() == "EOF" {
+			// Check different types of errors
+			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+				fmt.Println("⏰ Connection timeout")
+			} else if err.Error() == "EOF" {
 				fmt.Println("🎮 Game ended - Server closed connection")
 			} else {
-				fmt.Println("❌ Server disconnected:", err)
+				fmt.Println("❌ Connection error:", err)
 			}
 			break
 		}
 
-		message = strings.TrimSpace(message)
+		if n == 0 {
+			fmt.Println("🎮 No data received from server")
+			continue
+		}
+
+		message := strings.TrimSpace(string(buffer[:n]))
 		fmt.Println(message)
 
 		// Game over conditions
 		if strings.Contains(message, "wins") || strings.Contains(message, "🏆") {
 			fmt.Println("🎮 Game Over! Thanks for playing!")
 			// Wait a bit to see if there are more messages
-			conn.SetReadDeadline(time.Now().Add(1 * time.Second))
+			time.Sleep(2 * time.Second)
 			continue
 		}
 
@@ -89,8 +101,8 @@ func playGame(conn net.Conn, reader *bufio.Reader) {
 			break
 		}
 
-		// Check if it's our turn to choose a troop
-		if strings.Contains(strings.ToLower(message), "choose troop") {
+		// Check if server is asking for troop choice
+		if strings.Contains(message, "Choose troop") || strings.Contains(message, "choose troop") {
 			for {
 				fmt.Print("➡ Your choice (1-3): ")
 				input, err := reader.ReadString('\n')
@@ -101,17 +113,21 @@ func playGame(conn net.Conn, reader *bufio.Reader) {
 
 				choice := strings.TrimSpace(input)
 				if choice == "1" || choice == "2" || choice == "3" {
-					// Send choice to server
+					// Send choice to server with newline
 					_, err = conn.Write([]byte(choice + "\n"))
 					if err != nil {
 						fmt.Println("❌ Error sending choice to server:", err)
 						return
 					}
+					fmt.Println("✅ Choice sent:", choice)
 					break
 				} else {
 					fmt.Println("❌ Invalid choice! Please enter 1, 2, or 3")
 				}
 			}
 		}
+
+		// Reset deadline for next read
+		conn.SetReadDeadline(time.Now().Add(30 * time.Second))
 	}
 }

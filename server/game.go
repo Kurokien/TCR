@@ -16,12 +16,14 @@ func safeWriteToConn(conn net.Conn, data []byte, playerID int) error {
 		return fmt.Errorf("connection is nil")
 	}
 
+	// Check if connection is still alive
 	conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
 	_, err := conn.Write(data)
 	if err != nil {
 		fmt.Printf("⚠️ Error writing to player %d: %v\n", playerID, err)
+		return err
 	}
-	return err
+	return nil
 }
 
 // Broadcast message to all players safely
@@ -44,13 +46,22 @@ func StartGame(players []*Player, conns []net.Conn) {
 		if r := recover(); r != nil {
 			fmt.Println("‼ Panic in StartGame:", r)
 		}
+		// Clean close all connections
+		for i, conn := range conns {
+			if conn != nil {
+				fmt.Printf("🔌 Closing connection for player %d\n", i+1)
+				conn.Close()
+			}
+		}
 	}()
 
 	troops := LoadTroops()
 	if len(troops) < 3 {
 		fmt.Println("❌ Not enough troops.")
 		for _, conn := range conns {
-			conn.Write([]byte("Server error: Not enough troops.\n"))
+			if conn != nil {
+				safeWriteToConn(conn, []byte("Server error: Not enough troops.\n"), 0)
+			}
 		}
 		return
 	}
@@ -71,14 +82,26 @@ func StartGame(players []*Player, conns []net.Conn) {
 	startMsg := "🎮 Game Started! Prepare for battle!\n"
 	safeBroadcast(conns, []byte(startMsg))
 
+	// Wait a moment for clients to process
+	time.Sleep(100 * time.Millisecond)
+
 	for i := range conns {
-		playerMsg := fmt.Sprintf("You are Player %d\n", i+1)
-		safeWriteToConn(conns[i], []byte(playerMsg), i+1)
+		if conns[i] != nil {
+			playerMsg := fmt.Sprintf("You are Player %d\n", i+1)
+			safeWriteToConn(conns[i], []byte(playerMsg), i+1)
+		}
 	}
 
-	for {
+	gameActive := true
+	for gameActive {
 		enemy := 1 - current
 		fmt.Printf("🔄 Turn: Player %d\n", current+1)
+
+		// Check if connections are still valid
+		if conns[current] == nil || conns[enemy] == nil {
+			fmt.Println("❌ Connection lost, ending game")
+			break
+		}
 
 		// Notify both players whose turn it is
 		turnMsg := fmt.Sprintf("🔄 Player %d's turn\n", current+1)
@@ -95,7 +118,7 @@ func StartGame(players []*Player, conns []net.Conn) {
 		err := safeWriteToConn(conns[current], []byte(msg), current+1)
 		if err != nil {
 			fmt.Printf("❌ Cannot send troop info to player %d, ending game\n", current+1)
-			return
+			break
 		}
 
 		// Send waiting message to other player
@@ -108,22 +131,28 @@ func StartGame(players []*Player, conns []net.Conn) {
 		line, err := reader.ReadString('\n')
 		if err != nil {
 			fmt.Printf("⚠ Player %d input error: %v\n", current+1, err)
-			safeWriteToConn(conns[current], []byte("Timeout or error reading input.\n"), current+1)
+			timeoutMsg := "Timeout or error reading input. Skipping turn...\n"
+			safeWriteToConn(conns[current], []byte(timeoutMsg), current+1)
+
+			// Notify other player
+			skipMsg := fmt.Sprintf("Player %d's turn was skipped due to timeout\n", current+1)
+			safeWriteToConn(conns[enemy], []byte(skipMsg), enemy+1)
+
 			current = enemy
 			continue
 		}
 
 		choice, err := strconv.Atoi(strings.TrimSpace(line))
 		if err != nil || choice < 1 || choice > 3 {
-			safeWriteToConn(conns[current], []byte("Invalid choice. Skipping turn.\n"), current+1)
-			current = enemy
-			continue
+			invalidMsg := "Invalid choice. Try again with 1, 2, or 3.\n"
+			safeWriteToConn(conns[current], []byte(invalidMsg), current+1)
+			continue // Don't switch turns, let them try again
 		}
 		choice--
 
 		if choice >= len(playerTroops[current]) {
-			safeWriteToConn(conns[current], []byte("Invalid troop index. Skipping turn.\n"), current+1)
-			current = enemy
+			invalidMsg := "Invalid troop index. Try again.\n"
+			safeWriteToConn(conns[current], []byte(invalidMsg), current+1)
 			continue
 		}
 
@@ -132,8 +161,8 @@ func StartGame(players []*Player, conns []net.Conn) {
 		atkVal, okAtk := selected["atk"].(float64)
 		defVal, okDef := selected["def"].(float64)
 		if !okName || !okAtk || !okDef {
-			safeWriteToConn(conns[current], []byte("Invalid troop data. Skipping turn.\n"), current+1)
-			current = enemy
+			invalidMsg := "Invalid troop data. Try again.\n"
+			safeWriteToConn(conns[current], []byte(invalidMsg), current+1)
 			continue
 		}
 
@@ -165,9 +194,8 @@ func StartGame(players []*Player, conns []net.Conn) {
 		}
 
 		// Send result to both players with more detailed info
-		res := fmt.Sprintf("⚔️ %s attacked %s for %d damage. %s's %s HP: %d\n",
-			name, target, dmg,
-			fmt.Sprintf("Player %d", enemy+1), target, towers[enemy][target])
+		res := fmt.Sprintf("⚔️ Player %d's %s attacked Player %d's %s for %d damage. %s HP: %d\n",
+			current+1, name, enemy+1, target, dmg, target, towers[enemy][target])
 
 		safeBroadcast(conns, []byte(res))
 
@@ -178,24 +206,25 @@ func StartGame(players []*Player, conns []net.Conn) {
 
 		safeBroadcast(conns, []byte(statusMsg))
 
-		// Check win
+		// Check win condition
 		if towers[enemy]["King"] <= 0 {
-			msg := fmt.Sprintf("🏆 Player %d wins!\n", current+1)
-			safeBroadcast(conns, []byte(msg))
+			winMsg := fmt.Sprintf("🏆 Player %d wins! Game Over!\n", current+1)
+			safeBroadcast(conns, []byte(winMsg))
 
-			// Add delay before closing connections to ensure messages are received
-			time.Sleep(500 * time.Millisecond)
+			fmt.Printf("🎉 Game ended: Player %d wins!\n", current+1)
 
-			// Close connections safely
-			for i := range conns {
-				if conns[i] != nil {
-					conns[i].Close()
-				}
-			}
+			// Give clients time to read the message
+			time.Sleep(2 * time.Second)
+			gameActive = false
 			break
 		}
 
 		// Switch turn
 		current = enemy
+
+		// Small delay between turns
+		time.Sleep(100 * time.Millisecond)
 	}
+
+	fmt.Println("🎮 Game finished, cleaning up...")
 }
