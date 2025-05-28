@@ -1,3 +1,4 @@
+// File: client/main.go
 package main
 
 import (
@@ -7,13 +8,12 @@ import (
 	"net"
 	"os"
 	"strings"
-	"time"
 )
 
 func main() {
 	conn, err := net.Dial("tcp", "localhost:9000")
 	if err != nil {
-		fmt.Println("❌ Failed to connect to server:", err)
+		fmt.Println("Failed to connect to server:", err)
 		return
 	}
 	defer conn.Close()
@@ -39,95 +39,48 @@ func main() {
 		reply := make([]byte, 256)
 		n, err := conn.Read(reply)
 		if err != nil {
-			fmt.Println("❌ Error reading from server:", err)
+			fmt.Println("Error reading from server:", err)
 			break
 		}
 
 		response := strings.TrimSpace(string(reply[:n]))
-		fmt.Println("✅ Server response:", response)
+		fmt.Println("\u2714 Server response:", response)
 
 		if response == "Login success" {
+			fmt.Println("\U0001f3ae Entering game mode...")
 			playGame(conn, reader)
 			break
 		} else {
-			fmt.Println("🔁 Try again or press Ctrl+C to quit.")
+			fmt.Println("\u274C Try again or press Ctrl+C to quit.")
 		}
 	}
 }
 
 func playGame(conn net.Conn, reader *bufio.Reader) {
-	fmt.Println("🎮 Entering game mode...")
-
-	// Set longer timeout for reading from server
-	conn.SetReadDeadline(time.Now().Add(60 * time.Second))
-
-	buffer := make([]byte, 1024)
+	serverReader := bufio.NewReader(conn)
 
 	for {
-		// Read message from server with timeout
-		conn.SetReadDeadline(time.Now().Add(30 * time.Second))
-		n, err := conn.Read(buffer)
+		message, err := serverReader.ReadString('\n')
 		if err != nil {
-			// Check different types of errors
-			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
-				fmt.Println("⏰ Connection timeout")
-			} else if err.Error() == "EOF" {
-				fmt.Println("🎮 Game ended - Server closed connection")
-			} else {
-				fmt.Println("❌ Connection error:", err)
-			}
+			fmt.Println("\u274C Server disconnected: EOF")
 			break
 		}
 
-		if n == 0 {
-			fmt.Println("🎮 No data received from server")
-			continue
-		}
+		fmt.Print(message)
 
-		message := strings.TrimSpace(string(buffer[:n]))
-		fmt.Println(message)
-
-		// Game over conditions
-		if strings.Contains(message, "wins") || strings.Contains(message, "🏆") {
-			fmt.Println("🎮 Game Over! Thanks for playing!")
-			// Wait a bit to see if there are more messages
-			time.Sleep(2 * time.Second)
-			continue
-		}
-
-		// Timeout condition
-		if strings.Contains(message, "Timeout waiting for second player") {
-			fmt.Println("⏰ Game cancelled due to timeout")
+		if strings.Contains(message, "wins") || strings.Contains(message, "\U0001f3c6") {
 			break
 		}
 
-		// Check if server is asking for troop choice
-		if strings.Contains(message, "Choose troop") || strings.Contains(message, "choose troop") {
-			for {
-				fmt.Print("➡ Your choice (1-3): ")
-				input, err := reader.ReadString('\n')
-				if err != nil {
-					fmt.Println("❌ Error reading input:", err)
-					return
-				}
-
-				choice := strings.TrimSpace(input)
-				if choice == "1" || choice == "2" || choice == "3" {
-					// Send choice to server with newline
-					_, err = conn.Write([]byte(choice + "\n"))
-					if err != nil {
-						fmt.Println("❌ Error sending choice to server:", err)
-						return
-					}
-					fmt.Println("✅ Choice sent:", choice)
+		if strings.Contains(message, "Choose troop") {
+			input, _ := reader.ReadString('\n')
+			input = strings.TrimSpace(input)
+			if input == "1" || input == "2" || input == "3" {
+				if _, err := conn.Write([]byte(input + "\n")); err != nil {
+					fmt.Println("\u274C Error sending input:", err)
 					break
-				} else {
-					fmt.Println("❌ Invalid choice! Please enter 1, 2, or 3")
 				}
 			}
 		}
-
-		// Reset deadline for next read
-		conn.SetReadDeadline(time.Now().Add(30 * time.Second))
 	}
 }
