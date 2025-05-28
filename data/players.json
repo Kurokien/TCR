@@ -1,0 +1,14 @@
+[
+  {
+    "username": "player1",
+    "password": "123",
+    "exp": 0,
+    "level": 1
+  },
+  {
+    "username": "player2",
+    "password": "123",
+    "exp": 0,
+    "level": 1
+  }
+]

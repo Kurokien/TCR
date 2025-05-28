@@ -1,0 +1,47 @@
+[
+  {
+    "name": "Pawn",
+    "hp": 50.0,
+    "atk": 150.0,
+    "def": 100.0,
+    "mana": 3.0,
+    "exp": 5.0,
+    "special": ""
+  },
+  {
+    "name": "Bishop",
+    "hp": 100.0,
+    "atk": 200.0,
+    "def": 150.0,
+    "mana": 4.0,
+    "exp": 10.0,
+    "special": ""
+  },
+  {
+    "name": "Rook",
+    "hp": 250.0,
+    "atk": 200.0,
+    "def": 200.0,
+    "mana": 5.0,
+    "exp": 25.0,
+    "special": ""
+  },
+  {
+    "name": "Knight",
+    "hp": 200.0,
+    "atk": 300.0,
+    "def": 150.0,
+    "mana": 5.0,
+    "exp": 25.0,
+    "special": ""
+  },
+  {
+    "name": "Prince",
+    "hp": 500.0,
+    "atk": 400.0,
+    "def": 300.0,
+    "mana": 6.0,
+    "exp": 50.0,
+    "special": ""
+  }
+]
